@@ -1,14 +1,7 @@
-use std::sync::{
-    atomic::{AtomicUsize, Ordering::SeqCst},
-    Arc,
-};
-
 use super::*;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct Versions {
-    #[serde(with = "ser")]
-    rts: Arc<AtomicUsize>,
     pending: Option<(u64, Option<IVec>)>,
     versions: Vec<(u64, Option<IVec>)>,
 }
@@ -70,22 +63,6 @@ impl Versions {
         (0, None)
     }
 
-    pub(crate) fn bump_rts(&self, rts: u64) {
-        let mut current = self.rts.load(SeqCst);
-        while current < rts as usize {
-            let ret = self.rts.compare_and_swap(
-                current,
-                rts as usize,
-                SeqCst,
-            );
-            if ret == current {
-                // cas successful
-                break;
-            }
-            current = ret;
-        }
-    }
-
     fn last_visible_lsn(&self) -> u64 {
         self.versions
             .iter()
@@ -93,52 +70,5 @@ impl Versions {
             .nth(0)
             .map(|(vsn, _)| *vsn)
             .unwrap_or(0)
-    }
-}
-
-pub(crate) mod ser {
-    use std::sync::{
-        atomic::{AtomicUsize, Ordering::SeqCst},
-        Arc,
-    };
-
-    use serde::de::{Deserializer, Visitor};
-    use serde::ser::Serializer;
-
-    pub(crate) fn serialize<S>(
-        data: &Arc<AtomicUsize>,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.serialize_u64(data.load(SeqCst) as u64)
-    }
-
-    struct VersionsVisitor;
-
-    impl<'de> Visitor<'de> for VersionsVisitor {
-        type Value = Arc<AtomicUsize>;
-
-        fn expecting(
-            &self,
-            formatter: &mut std::fmt::Formatter,
-        ) -> std::fmt::Result {
-            formatter.write_str("a borrowed byte array")
-        }
-
-        #[inline]
-        fn visit_u64<E>(self, v: u64) -> Result<Arc<AtomicUsize>, E> {
-            Ok(Arc::new(AtomicUsize::new(v as usize)))
-        }
-    }
-
-    pub(crate) fn deserialize<'de, D>(
-        deserializer: D,
-    ) -> Result<Arc<AtomicUsize>, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        deserializer.deserialize_u64(VersionsVisitor)
     }
 }
