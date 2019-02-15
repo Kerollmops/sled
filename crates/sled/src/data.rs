@@ -6,7 +6,7 @@ use super::*;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) enum Data {
     Index(Vec<(IVec, PageId)>),
-    Leaf(Vec<(IVec, IVec)>),
+    Leaf(Vec<(IVec, PageId)>),
 }
 
 impl Data {
@@ -33,8 +33,7 @@ impl Data {
                     sz = sz
                         .saturating_add(k.len() as u64)
                         .saturating_add(size_of::<IVec>() as u64)
-                        .saturating_add(value.len() as u64)
-                        .saturating_add(size_of::<IVec>() as u64);
+                        .saturating_add(size_of::<PageId>() as u64);
                 }
                 sz.saturating_add(
                     size_of::<Vec<(IVec, IVec)>>() as u64
@@ -120,7 +119,7 @@ impl Data {
         }
     }
 
-    pub(crate) fn leaf_ref(&self) -> Option<&Vec<(IVec, IVec)>> {
+    pub(crate) fn leaf_ref(&self) -> Option<&Vec<(IVec, PageId)>> {
         match *self {
             Data::Index(_) => None,
             Data::Leaf(ref items) => Some(items),

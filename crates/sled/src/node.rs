@@ -88,6 +88,8 @@ impl Node {
             Counter(_) => unimplemented!(),
             Meta(_) => unimplemented!(),
             PendingVersion(..) => unimplemented!(),
+            PushVersion(..) => unimplemented!(),
+            MergeVersion(..) => unimplemented!(),
             CommitVersion(_) => unimplemented!(),
             Versions(_) => unimplemented!(),
         }

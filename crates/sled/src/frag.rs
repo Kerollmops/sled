@@ -19,7 +19,9 @@ pub(crate) enum Frag {
     Counter(usize),
     Meta(Meta),
     CommitVersion(u64),
-    PendingVersion(u64, IVec),
+    PendingVersion(u64, Option<IVec>),
+    PushVersion(u64, Option<IVec>),
+    MergeVersion(u64, IVec),
     Versions(Versions),
 }
 
