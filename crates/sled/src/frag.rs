@@ -1,28 +1,80 @@
 use super::*;
 
-// TODO
-// TxBegin(TxID), // in-mem
-// TxCommit(TxID), // in-mem
-// TxAbort(TxID), // in-mem
-
+// NB correctness critical: never reorder or
+// insert new variants or we will fail to load
+// previously written databases.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) enum Frag {
-    Set(IVec, IVec),
-    Del(IVec),
-    Merge(IVec, IVec),
-    Base(Node),
-    ChildSplit(ChildSplit),
-    ParentSplit(ParentSplit),
-    Counter(usize),
+    /// General-purpose structures
+    // Metadata about the database and its collections
     Meta(Meta),
-    CommitVersion(u64),
-    PendingVersion(u64, Option<IVec>),
-    PushVersion(u64, Option<IVec>),
-    MergeVersion(u64, IVec),
+
+    // A monotonic ID generator for use in transactions etc...
+    Counter(usize),
+
+    /// Tree-related structures
+    // The base tree node
+    Base(Node),
+
+    // Splits a tree node at a certain point
+    // after the right side of the split was
+    // already installed as a new `Base`
+    ChildSplit(ChildSplit),
+
+    // Tells an index node that a child split
+    ParentSplit(ParentSplit),
+
+    // Begins the merge of a child detected to
+    // be too small
+    InitialParentNodeMerge(PageId),
+
+    // Marks a small node as ready to be merged
+    // into the node to its immediate left
+    RightNodeMerge,
+
+    // Merges a small node directly to the
+    // right into this node, adopting its
+    // hi key and next pointer
+    LeftNodeMerge(LeftMerge),
+
+    // Clears the initial sign to merge a small
+    // child
+    FinalParentNodeMerge(PageId),
+
+    // Insert a new key->version chain mapping
+    InsertVersion(IVec, PageId),
+
+    // Remove a key->version chain mapping
+    RemoveVersion(IVec),
+
+    // A multi-version value chain
     Versions(Versions),
-    RightMerge,
-    LeftMerge(LeftMerge),
-    ParentMerge(PageId),
+
+    // Insert a new value into a version chain
+    VersionSet(u64, IVec),
+
+    // Merge a new value into a version chain
+    // that will be consolidated using a
+    // configured merge operator
+    VersionMerge(u64, IVec),
+
+    // Delete a value from a version chain
+    VersionDel(u64),
+
+    // Commits a pending version transaction
+    VersionCommit(u64),
+
+    // Insert a new value into a version chain
+    // as part of a pending transaction
+    VersionPendingSet(u64, IVec),
+
+    // Merge a new value into a version chain
+    // as part of a pending transaction
+    VersionPendingMerge(u64, IVec),
+
+    // Delete a value from a version chain
+    // as part of a pending transaction
+    VersionPendingDel(u64),
 }
 
 impl Frag {
