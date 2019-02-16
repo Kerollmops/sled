@@ -24,7 +24,7 @@ impl Version {
 }
 
 impl Versions {
-    pub(crate) fn apply(&mut self, frag: &Frag, _config: &Config) {
+    pub(crate) fn apply(&mut self, frag: &Frag) {
         if let Frag::VersionCommit(ts) = frag {
             assert!(self.last_visible_lsn() < *ts);
             assert!(self.pending.is_some());
@@ -73,21 +73,66 @@ impl Versions {
         }
     }
 
-    // returns the currently visible version at the given timestamp
-    pub(crate) fn visible(&self, ts: u64) -> Version {
+    // returns the currently visible version at the given timestamp,
+    // possibly using a merge operator to consolidate multiple
+    pub(crate) fn visible(
+        &self,
+        ts: u64,
+        config: &Config,
+    ) -> (u64, Option<IVec>) {
+        let mut to_merge = vec![];
+
         if let Some(pending_vsn) = self.pending {
             if pending_vsn.ts() == ts {
-                return pending_vsn.clone();
+                match pending_vsn {
+                    Version::Del(ts) => return (ts, None),
+                    Version::Set(ts, val) => {
+                        return (ts, Some(val.clone()));
+                    }
+                    Version::Merge(ts, val) => {
+                        to_merge.push(val);
+                    }
+                }
             }
         }
 
         for vsn in self.versions.iter().rev() {
             if vsn.ts() <= ts {
-                return vsn.clone();
+                match vsn {
+                    Version::Del(ts) => {
+                        if to_merge.is_empty() {
+                            return (*ts, None);
+                        } else {
+                            break;
+                        }
+                    }
+                    Version::Set(ts, val) => {
+                        if to_merge.is_empty() {
+                            return (*ts, Some(val.clone()));
+                        } else {
+                            to_merge.push(*val);
+                            break;
+                        }
+                    }
+                    Version::Merge(ts, val) => to_merge.push(*val),
+                }
             }
         }
 
-        Version::Del(0)
+        if to_merge.is_empty() {
+            return (0, None);
+        }
+
+        let merge_fn_ptr = config
+            .merge_operator
+            .expect("must have a merge operator set");
+
+        unsafe {
+            let merge_fn: MergeOperator =
+                std::mem::transmute(merge_fn_ptr);
+            let new =
+                merge_fn(&*decoded_k, Some(&records[idx].1), &val);
+        }
     }
 
     fn last_visible_lsn(&self) -> u64 {
