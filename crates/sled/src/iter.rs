@@ -29,6 +29,7 @@ fn upper_bound_includes<'a>(
 /// An iterator over keys and values in a `Tree`.
 pub struct Iter<'a> {
     pub(super) tree: &'a Tree,
+    pub(super) snapshot_timestamp: u64,
     pub(super) hi: ops::Bound<Vec<u8>>,
     pub(super) lo: ops::Bound<Vec<u8>>,
     pub(super) last_id: Option<PageId>,
@@ -36,7 +37,7 @@ pub struct Iter<'a> {
     pub(super) broken: Option<Error<()>>,
     pub(super) done: bool,
     pub(super) guard: Guard,
-    pub(super) is_scan: bool,
+    pub(super) is_unbounded: bool,
     // TODO we have to refactor this in light of pages being deleted
 }
 
@@ -168,7 +169,7 @@ impl<'a> Iterator for Iter<'a> {
             };
 
             if let Some(idx) = search {
-                let (k, v) = &leaf[idx];
+                let (k, versions_pid) = &leaf[idx];
                 let decoded_k = prefix_decode(prefix, &k);
 
                 if !upper_bound_includes(&self.hi, &*decoded_k) {
@@ -178,9 +179,34 @@ impl<'a> Iterator for Iter<'a> {
 
                 self.last_key = Some(decoded_k.clone());
 
+                let versions = self
+                    .tree
+                    .pages
+                    .get(*versions_pid, &self.guard)
+                    .map(|page_get| page_get.unwrap());
+
+                if let Err(e) = res {
+                    error!("iteration failed: {:?}", e);
+                    self.done = true;
+                    return Some(Err(e.danger_cast()));
+                }
+
+                let (versions_frag, _ptr) = res.unwrap();
+                let versions = frag.unwrap_versions();
+
+                let (_vsn, val) = versions.visible(
+                    &decoded_k,
+                    self.snapshot_timestamp,
+                    &self.tree.config,
+                );
+
+                if val.is_none() {
+                    continue;
+                }
+
                 let ret = Ok((
                     decoded_k,
-                    PinnedValue::new(&*v, value_guard),
+                    PinnedValue::new(&*val.unwrap(), value_guard),
                 ));
                 return Some(ret);
             }
@@ -226,7 +252,7 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
         let end_bound = &self.hi;
         let start_bound = &self.lo;
 
-        let (end, unbounded): (&[u8], bool) = if self.is_scan {
+        let (end, unbounded): (&[u8], bool) = if self.is_unbounded {
             match start_bound {
                 ops::Bound::Included(ref start)
                 | ops::Bound::Excluded(ref start) => {
@@ -367,10 +393,10 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
             };
 
             if let Some(idx) = search {
-                let (k, v) = &leaf[idx];
+                let (k, versions_pid) = &leaf[idx];
                 let decoded_k = prefix_decode(prefix, &k);
 
-                if !self.is_scan
+                if !self.is_unbounded
                     && !lower_bound_includes(&self.lo, &*decoded_k)
                 {
                     // we've overshot our bounds
@@ -379,14 +405,40 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
 
                 self.last_key = Some(decoded_k.clone());
 
+                let versions = self
+                    .tree
+                    .pages
+                    .get(*versions_pid, &self.guard)
+                    .map(|page_get| page_get.unwrap());
+
+                if let Err(e) = res {
+                    error!("iteration failed: {:?}", e);
+                    self.done = true;
+                    return Some(Err(e.danger_cast()));
+                }
+
+                let (versions_frag, _ptr) = res.unwrap();
+                let versions = frag.unwrap_versions();
+
+                let (_vsn, val) = versions.visible(
+                    &decoded_k,
+                    self.snapshot_timestamp,
+                    &self.tree.config,
+                );
+
+                if val.is_none() {
+                    continue;
+                }
+
                 let ret = Ok((
                     decoded_k,
-                    PinnedValue::new(&*v, value_guard),
+                    PinnedValue::new(&*val.unwrap(), value_guard),
                 ));
+
                 return Some(ret);
             }
 
-            if !self.is_scan
+            if !self.is_unbounded
                 && !lower_bound_includes(&self.lo, &node.lo)
             {
                 // we've overshot our bounds

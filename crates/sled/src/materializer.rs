@@ -66,7 +66,7 @@ impl Materializer for BLinkMaterializer {
             Frag::Versions(ref versions) => {
                 let mut versions = versions.clone();
                 for version in frag_iter {
-                    versions.apply(version, &self.config);
+                    versions.apply(version);
                 }
 
                 Frag::Versions(versions)

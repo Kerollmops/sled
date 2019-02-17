@@ -736,7 +736,7 @@ impl Tree {
         K: AsRef<[u8]>,
     {
         let mut iter = self.range(key..);
-        iter.is_scan = true;
+        iter.is_unbounded = true;
         iter
     }
 
@@ -802,13 +802,14 @@ impl Tree {
 
         Iter {
             tree: &self,
+            snapshot_timestamp: u64::max_value(),
             hi,
             lo,
             last_id: None,
             last_key: None,
             broken: None,
             done: false,
-            is_scan: false,
+            is_unbounded: false,
             guard,
         }
     }

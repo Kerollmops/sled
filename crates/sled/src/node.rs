@@ -33,7 +33,7 @@ impl Node {
         use self::Frag::*;
 
         match *frag {
-            Set(ref k, ref v) => {
+            InsertVersion(ref k, ref v) => {
                 // (when hi is empty, it means it's unbounded)
                 if self.hi.is_empty()
                     || prefix_cmp_encoded(k, &self.hi, &self.lo)
@@ -44,34 +44,13 @@ impl Node {
                     panic!("tried to consolidate set at key <= hi")
                 }
             }
-            Merge(ref k, ref v) => {
-                // (when hi is empty, it means it's unbounded)
-                if self.hi.is_empty()
-                    || prefix_cmp_encoded(k, &self.hi, &self.lo)
-                        == std::cmp::Ordering::Less
-                {
-                    let merge_fn_ptr = merge_operator
-                        .expect("must have a merge operator set");
-                    unsafe {
-                        let merge_fn: MergeOperator =
-                            std::mem::transmute(merge_fn_ptr);
-                        self.merge_leaf(
-                            k.clone(),
-                            v.clone(),
-                            merge_fn,
-                        );
-                    }
-                } else {
-                    panic!("tried to consolidate set at key <= hi")
-                }
-            }
             ChildSplit(ref child_split) => {
                 self.child_split(child_split);
             }
             ParentSplit(ref parent_split) => {
                 self.parent_split(parent_split);
             }
-            Del(ref k) => {
+            RemoveVersion(ref k) => {
                 // (when hi is empty, it means it's unbounded)
                 if self.hi.is_empty()
                     || prefix_cmp_encoded(k, &self.hi, &self.lo)
@@ -83,19 +62,15 @@ impl Node {
                 }
             }
             Base(_) => {
-                panic!("encountered base page in middle of chain")
+                panic!("encountered base page in middle of chain: {:?}", frag)
             }
-            Counter(_) => unimplemented!(),
-            Meta(_) => unimplemented!(),
-            PendingVersion(..) => unimplemented!(),
-            PushVersion(..) => unimplemented!(),
-            MergeVersion(..) => unimplemented!(),
-            CommitVersion(_) => unimplemented!(),
-            Versions(_) => unimplemented!(),
+            _ => {
+                panic!("encountered unexpected frag in middle of node's chain: {:?}", frag)
+            }
         }
     }
 
-    pub(crate) fn set_leaf(&mut self, key: IVec, val: IVec) {
+    pub(crate) fn set_leaf(&mut self, key: IVec, val: PageId) {
         if let Data::Leaf(ref mut records) = self.data {
             let search =
                 records.binary_search_by(|&(ref k, ref _v)| {
@@ -111,44 +86,6 @@ impl Node {
             }
         } else {
             panic!("tried to Set a value to an index");
-        }
-    }
-
-    pub(crate) fn merge_leaf(
-        &mut self,
-        key: IVec,
-        val: IVec,
-        merge_fn: MergeOperator,
-    ) {
-        if let Data::Leaf(ref mut records) = self.data {
-            let search =
-                records.binary_search_by(|&(ref k, ref _v)| {
-                    prefix_cmp(k, &*key)
-                });
-
-            let decoded_k = prefix_decode(&self.lo, &key);
-            if let Ok(idx) = search {
-                let new = merge_fn(
-                    &*decoded_k,
-                    Some(&records[idx].1),
-                    &val,
-                );
-                if let Some(new) = new {
-                    records[idx] = (key, new.into());
-                } else {
-                    records.remove(idx);
-                }
-            } else {
-                let new = merge_fn(&*decoded_k, None, &val);
-                if let Some(new) = new {
-                    records.push((key, new.into()));
-                    records.sort_unstable_by(|a, b| {
-                        prefix_cmp(&*a.0, &*b.0)
-                    });
-                }
-            }
-        } else {
-            panic!("tried to Merge a value to an index");
         }
     }
 
