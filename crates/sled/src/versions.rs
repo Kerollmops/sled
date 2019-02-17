@@ -33,18 +33,6 @@ impl Versions {
         }
 
         match frag {
-            Frag::VersionSet(ts, val) => {
-                assert!(self.last_visible_lsn() < *ts);
-                self.versions.push(Version::Set(*ts, val.clone()));
-            }
-            Frag::VersionMerge(ts, val) => {
-                assert!(self.last_visible_lsn() < *ts);
-                self.versions.push(Version::Merge(*ts, val.clone()));
-            }
-            Frag::VersionDel(ts) => {
-                assert!(self.last_visible_lsn() < *ts);
-                self.versions.push(Version::Del(*ts));
-            }
             Frag::VersionPendingSet(ts, val) => {
                 assert!(self.last_visible_lsn() < *ts);
                 self.pending = Some(Version::Set(*ts, val.clone()));
@@ -77,10 +65,12 @@ impl Versions {
     // possibly using a merge operator to consolidate multiple
     pub(crate) fn visible(
         &self,
+        key: &[u8],
         ts: u64,
         config: &Config,
     ) -> (u64, Option<IVec>) {
         let mut to_merge = vec![];
+        let mut ret_ts = 0;
 
         if let Some(pending_vsn) = self.pending {
             if pending_vsn.ts() == ts {
@@ -91,6 +81,9 @@ impl Versions {
                     }
                     Version::Merge(ts, val) => {
                         to_merge.push(val);
+                        if ret_ts == 0 {
+                            ret_ts = ts;
+                        }
                     }
                 }
             }
@@ -111,6 +104,9 @@ impl Versions {
                             return (*ts, Some(val.clone()));
                         } else {
                             to_merge.push(*val);
+                            if ret_ts == 0 {
+                                ret_ts = *ts;
+                            }
                             break;
                         }
                     }
@@ -120,19 +116,29 @@ impl Versions {
         }
 
         if to_merge.is_empty() {
-            return (0, None);
+            assert_eq!(ret_ts, 0);
+            return (ret_ts, None);
         }
 
         let merge_fn_ptr = config
             .merge_operator
             .expect("must have a merge operator set");
 
-        unsafe {
-            let merge_fn: MergeOperator =
-                std::mem::transmute(merge_fn_ptr);
-            let new =
-                merge_fn(&*decoded_k, Some(&records[idx].1), &val);
+        let merge_fn: MergeOperator =
+            unsafe { std::mem::transmute(merge_fn_ptr) };
+
+        let mut new = to_merge.pop().unwrap();
+
+        if to_merge.is_empty() {
+            let new = merge_fn(key, None, &new);
+            return (ret_ts, new.map(|v| v.into()));
         }
+
+        while let Some(merge) = to_merge.pop() {
+            let new = merge_fn(key, Some(&merge), &new);
+        }
+
+        (ret_ts, Some(new))
     }
 
     fn last_visible_lsn(&self) -> u64 {
