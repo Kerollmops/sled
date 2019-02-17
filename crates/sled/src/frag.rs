@@ -50,17 +50,6 @@ pub(crate) enum Frag {
     // A multi-version value chain
     Versions(Versions),
 
-    // Insert a new value into a version chain
-    VersionSet(u64, IVec),
-
-    // Merge a new value into a version chain
-    // that will be consolidated using a
-    // configured merge operator
-    VersionMerge(u64, IVec),
-
-    // Delete a value from a version chain
-    VersionDel(u64),
-
     // Commits a pending version transaction
     VersionCommit(u64),
 
@@ -82,7 +71,15 @@ impl Frag {
         if let Frag::Base(base, ..) = self {
             base
         } else {
-            panic!("called unwrap_base_ptr on non-Base Frag!")
+            panic!("called unwrap_base on non-Base Frag!")
+        }
+    }
+
+    pub(super) fn unwrap_versions(&self) -> &Versions {
+        if let Frag::Versions(versions) = self {
+            versions
+        } else {
+            panic!("called unwrap_versions on non-Base Frag!")
         }
     }
 
@@ -90,7 +87,7 @@ impl Frag {
         if let Frag::Meta(meta) = self {
             meta
         } else {
-            panic!("called unwrap_base_ptr on non-Base Frag!")
+            panic!("called unwrap_meta on non-Base Frag!")
         }
     }
 }
