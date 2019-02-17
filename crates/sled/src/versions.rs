@@ -145,3 +145,19 @@ impl Versions {
         self.versions.last().map(|vsn| vsn.ts()).unwrap_or(0)
     }
 }
+
+pub(crate) fn pull_version(
+    pages: &PageCache<BLinkMaterializer, Frag, Recovery>,
+    pid: PageId,
+    key: &[u8],
+    ts: u64,
+    config: &Config,
+    guard: &Guard,
+) -> Result<(u64, Option<IVec>), ()> {
+    let (versions_frag, _ptr) =
+        pages.get(pid, guard).map(|page_get| page_get.unwrap())?;
+
+    let versions = versions_frag.unwrap_versions();
+
+    Ok(versions.visible(key, ts, config))
+}

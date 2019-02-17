@@ -88,7 +88,7 @@ use {
     },
     serde::{Deserialize, Serialize},
     sled_sync::{debug_delay, pin, Guard},
-    versions::Versions,
+    versions::{pull_version, Versions},
 };
 
 type Key = Vec<u8>;

@@ -179,35 +179,30 @@ impl<'a> Iterator for Iter<'a> {
 
                 self.last_key = Some(decoded_k.clone());
 
-                let versions = self
-                    .tree
-                    .pages
-                    .get(*versions_pid, &self.guard)
-                    .map(|page_get| page_get.unwrap());
-
-                if let Err(e) = res {
-                    error!("iteration failed: {:?}", e);
-                    self.done = true;
-                    return Some(Err(e.danger_cast()));
-                }
-
-                let (versions_frag, _ptr) = res.unwrap();
-                let versions = frag.unwrap_versions();
-
-                let (_vsn, val) = versions.visible(
+                let res = pull_version(
+                    &self.tree.pages,
+                    *versions_pid,
                     &decoded_k,
                     self.snapshot_timestamp,
                     &self.tree.config,
+                    &self.guard,
                 );
 
-                if val.is_none() {
-                    continue;
-                }
+                let val = match res {
+                    Err(e) => {
+                        error!("iteration failed: {:?}", e);
+                        self.done = true;
+                        return Some(Err(e.danger_cast()));
+                    }
+                    Ok((_vsn, None)) => continue,
+                    Ok((_vsn, Some(val))) => val,
+                };
 
                 let ret = Ok((
                     decoded_k,
-                    PinnedValue::new(&*val.unwrap(), value_guard),
+                    PinnedValue::new(&*val, value_guard),
                 ));
+
                 return Some(ret);
             }
 
@@ -405,34 +400,28 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
 
                 self.last_key = Some(decoded_k.clone());
 
-                let versions = self
-                    .tree
-                    .pages
-                    .get(*versions_pid, &self.guard)
-                    .map(|page_get| page_get.unwrap());
-
-                if let Err(e) = res {
-                    error!("iteration failed: {:?}", e);
-                    self.done = true;
-                    return Some(Err(e.danger_cast()));
-                }
-
-                let (versions_frag, _ptr) = res.unwrap();
-                let versions = frag.unwrap_versions();
-
-                let (_vsn, val) = versions.visible(
+                let res = pull_version(
+                    &self.tree.pages,
+                    *versions_pid,
                     &decoded_k,
                     self.snapshot_timestamp,
                     &self.tree.config,
+                    &self.guard,
                 );
 
-                if val.is_none() {
-                    continue;
-                }
+                let val = match res {
+                    Err(e) => {
+                        error!("iteration failed: {:?}", e);
+                        self.done = true;
+                        return Some(Err(e.danger_cast()));
+                    }
+                    Ok((_vsn, None)) => continue,
+                    Ok((_vsn, Some(val))) => val,
+                };
 
                 let ret = Ok((
                     decoded_k,
-                    PinnedValue::new(&*val.unwrap(), value_guard),
+                    PinnedValue::new(&*val, value_guard),
                 ));
 
                 return Some(ret);
