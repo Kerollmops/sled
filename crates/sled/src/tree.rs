@@ -1,6 +1,5 @@
 use std::{
     borrow::Cow,
-    cmp::Ordering::{Greater, Less},
     fmt::{self, Debug},
     ops::{self, RangeBounds},
     sync::Arc,
@@ -171,45 +170,16 @@ impl Tree {
     ) -> Result<Option<(Key, PinnedValue)>, ()> {
         let _measure = Measure::new(&M.tree_get);
 
-        // the double guard is a hack that maintains
-        // correctness of the ret value
-        let guard = pin();
-        let pin_guard = pin();
+        let mut iter = self.range((
+            std::ops::Bound::Unbounded,
+            std::ops::Bound::Excluded(key),
+        ));
 
-        let path = self.path_for_key(key.as_ref(), &guard)?;
-        let (last_frag, _tree_ptr) = path
-            .last()
-            .expect("path should always contain a last element");
-
-        let last_node = last_frag.unwrap_base();
-        let data = &last_node.data;
-        let items =
-            data.leaf_ref().expect("last_node should be a leaf");
-        let search = leaf_search(Less, items, |&(ref k, ref _v)| {
-            prefix_cmp_encoded(k, key.as_ref(), &last_node.lo)
-        });
-
-        let ret = if search.is_none() {
-            let mut iter = self.range((
-                std::ops::Bound::Unbounded,
-                std::ops::Bound::Excluded(key),
-            ));
-
-            match iter.next_back() {
-                Some(Err(e)) => return Err(e),
-                Some(Ok(pair)) => Some(pair),
-                None => None,
-            }
-        } else {
-            let idx = search.unwrap();
-            let (encoded_key, v) = &items[idx];
-            Some((
-                prefix_decode(&last_node.lo, &*encoded_key),
-                PinnedValue::new(&*v, pin_guard),
-            ))
+        let ret = match iter.next_back() {
+            Some(Err(e)) => return Err(e),
+            Some(Ok(pair)) => Some(pair),
+            None => None,
         };
-
-        guard.flush();
 
         Ok(ret)
     }
@@ -241,44 +211,16 @@ impl Tree {
     ) -> Result<Option<(Key, PinnedValue)>, ()> {
         let _measure = Measure::new(&M.tree_get);
 
-        let guard = pin();
-        let pin_guard = pin();
+        let mut iter = self.range((
+            std::ops::Bound::Excluded(key),
+            std::ops::Bound::Unbounded,
+        ));
 
-        let path = self.path_for_key(key.as_ref(), &guard)?;
-        let (last_frag, _tree_ptr) = path
-            .last()
-            .expect("path should always contain a last element");
-
-        let last_node = last_frag.unwrap_base();
-        let data = &last_node.data;
-        let items =
-            data.leaf_ref().expect("last_node should be a leaf");
-        let search =
-            leaf_search(Greater, items, |&(ref k, ref _v)| {
-                prefix_cmp_encoded(k, key.as_ref(), &last_node.lo)
-            });
-
-        let ret = if search.is_none() {
-            let mut iter = self.range((
-                std::ops::Bound::Excluded(key),
-                std::ops::Bound::Unbounded,
-            ));
-
-            match iter.next() {
-                Some(Err(e)) => return Err(e),
-                Some(Ok(pair)) => Some(pair),
-                None => None,
-            }
-        } else {
-            let idx = search.unwrap();
-            let (encoded_key, v) = &items[idx];
-            Some((
-                prefix_decode(&last_node.lo, &*encoded_key),
-                PinnedValue::new(&*v, pin_guard),
-            ))
+        let ret = match iter.next() {
+            Some(Err(e)) => return Err(e),
+            Some(Ok(pair)) => Some(pair),
+            None => None,
         };
-
-        guard.flush();
 
         Ok(ret)
     }
@@ -1139,19 +1081,36 @@ impl Tree {
     ) -> Result<(Path<'g>, Option<&'g [u8]>), ()> {
         let path = self.path_for_key(key.as_ref(), guard)?;
 
-        let ret = path.last().and_then(|(last_frag, _tree_ptr)| {
-            let last_node = last_frag.unwrap_base();
-            let data = &last_node.data;
-            let items =
-                data.leaf_ref().expect("last_node should be a leaf");
-            let search = items
-                .binary_search_by(|&(ref k, ref _v)| {
-                    prefix_cmp_encoded(k, key.as_ref(), &last_node.lo)
-                })
-                .ok();
+        // pull out tree leaf pointers to k->v items
+        let (last_frag, _ptr) = &path.last().unwrap();
+        let last_node = last_frag.unwrap_base();
+        let data = &last_node.data;
+        let items =
+            data.leaf_ref().expect("last_node should be a leaf");
 
-            search.map(|idx| &*items[idx].1)
-        });
+        // look for our key in the leaf items
+        let search = items
+            .binary_search_by(|&(ref k, ref _v)| {
+                prefix_cmp_encoded(k, key.as_ref(), &last_node.lo)
+            })
+            .ok();
+
+        let ret = if let Some(idx) = search {
+            let versions_pid = items[idx].1;
+
+            let (_ts, res) = pull_version(
+                &self.pages,
+                versions_pid,
+                key.as_ref(),
+                u64::max_value(),
+                &self.config,
+                guard,
+            )?;
+
+            res.map(|r| &*r)
+        } else {
+            None
+        };
 
         Ok((path, ret))
     }

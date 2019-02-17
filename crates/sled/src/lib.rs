@@ -67,7 +67,6 @@ use {
     self::{
         binary_search::{
             binary_search_gt, binary_search_lt, binary_search_lub,
-            leaf_search,
         },
         data::Data,
         frag::{ChildSplit, Frag, ParentSplit},
