@@ -1,6 +1,8 @@
 use super::*;
 
-#[derive(Clone, Eq, PartialEq, Debug, Serialize, Deserialize)]
+#[derive(
+    Default, Clone, Eq, PartialEq, Debug, Serialize, Deserialize,
+)]
 pub(crate) struct Versions {
     pending: Option<Version>,
     versions: Vec<Version>,
@@ -26,7 +28,7 @@ impl Version {
 impl Versions {
     pub(crate) fn apply(&mut self, frag: &Frag) {
         if let Frag::VersionCommit(ts) = frag {
-            assert!(self.last_visible_lsn() < *ts);
+            assert!(self.highest_visible_timestamp() < *ts);
             assert!(self.pending.is_some());
         } else {
             assert!(self.pending.is_none());
@@ -34,19 +36,19 @@ impl Versions {
 
         match frag {
             Frag::VersionPendingSet(ts, val) => {
-                assert!(self.last_visible_lsn() < *ts);
+                assert!(self.highest_visible_timestamp() < *ts);
                 self.pending = Some(Version::Set(*ts, val.clone()));
             }
             Frag::VersionPendingMerge(ts, val) => {
-                assert!(self.last_visible_lsn() < *ts);
+                assert!(self.highest_visible_timestamp() < *ts);
                 self.pending = Some(Version::Merge(*ts, val.clone()));
             }
             Frag::VersionPendingDel(ts) => {
-                assert!(self.last_visible_lsn() < *ts);
+                assert!(self.highest_visible_timestamp() < *ts);
                 self.pending = Some(Version::Del(*ts));
             }
             Frag::VersionCommit(ts) => {
-                assert!(self.last_visible_lsn() < *ts);
+                assert!(self.highest_visible_timestamp() < *ts);
                 if let Some(pending_vsn) = self.pending.take() {
                     assert_eq!(pending_vsn.ts(), *ts);
                     self.versions.push(pending_vsn);
@@ -141,7 +143,7 @@ impl Versions {
         (ret_ts, Some(new))
     }
 
-    fn last_visible_lsn(&self) -> u64 {
+    pub(crate) fn highest_visible_timestamp(&self) -> u64 {
         self.versions.last().map(|vsn| vsn.ts()).unwrap_or(0)
     }
 }
