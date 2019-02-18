@@ -33,7 +33,7 @@ impl Node {
         use self::Frag::*;
 
         match *frag {
-            InsertVersion(ref k, ref v) => {
+            InsertVersions(ref k, ref v) => {
                 // (when hi is empty, it means it's unbounded)
                 if self.hi.is_empty()
                     || prefix_cmp_encoded(k, &self.hi, &self.lo)
@@ -50,7 +50,7 @@ impl Node {
             ParentSplit(ref parent_split) => {
                 self.parent_split(parent_split);
             }
-            RemoveVersion(ref k) => {
+            RemoveVersions(ref k) => {
                 // (when hi is empty, it means it's unbounded)
                 if self.hi.is_empty()
                     || prefix_cmp_encoded(k, &self.hi, &self.lo)

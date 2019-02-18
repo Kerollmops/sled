@@ -42,10 +42,10 @@ pub(crate) enum Frag {
     FinalParentNodeMerge(PageId),
 
     // Insert a new key->version chain mapping
-    InsertVersion(IVec, PageId),
+    InsertVersions(IVec, PageId),
 
     // Remove a key->version chain mapping
-    RemoveVersion(IVec),
+    RemoveVersions(IVec),
 
     // A multi-version value chain
     Versions(Versions),
