@@ -135,7 +135,38 @@ impl Tree {
         let guard = pin();
         let pin_guard = pin();
 
-        let (_, ret) = self.get_internal(key.as_ref(), &guard)?;
+        let path = self.path_for_key(key.as_ref(), &guard)?;
+
+        // pull out tree leaf pointers to k->v items
+        let (last_frag, _ptr) = &path.last().unwrap();
+        let last_node = last_frag.unwrap_base();
+        let data = &last_node.data;
+        let items =
+            data.leaf_ref().expect("last_node should be a leaf");
+
+        // look for our key in the leaf items
+        let search = items
+            .binary_search_by(|&(ref k, ref _v)| {
+                prefix_cmp_encoded(k, key.as_ref(), &last_node.lo)
+            })
+            .ok();
+
+        let ret = if let Some(idx) = search {
+            let versions_pid = items[idx].1;
+
+            let (_ts, res) = pull_version(
+                &self.pages,
+                versions_pid,
+                key.as_ref(),
+                u64::max_value(),
+                &self.config,
+                &guard,
+            )?;
+
+            res.map(|r| &*r)
+        } else {
+            None
+        };
 
         guard.flush();
 
@@ -275,18 +306,15 @@ impl Tree {
         // cap fails it doesn't mean our value was changed.
         loop {
             let pin_guard = pin();
-            let (mut path, cur) = self
-                .get_internal(key.as_ref(), &guard)
+            let tx_ts = self.new_tx_timestamp();
+
+            let (mut path, versions) = self
+                .get_versions(key.as_ref(), &guard)
                 .map_err(|e| e.danger_cast())?;
 
-            if old != cur.map(|v| &*v) {
-                return Err(Error::CasFailed(
-                    cur.map(|c| PinnedValue::new(c, pin_guard)),
-                ));
+            if old.is_some() && versions.is_none() {
+                return Err(Error::CasFailed(None));
             }
-
-            let mut subscriber_reservation =
-                self.subscriptions.reserve(&key);
 
             let (leaf_frag, leaf_ptr) = path.pop().expect(
                 "get_internal somehow returned a path of length zero",
@@ -296,40 +324,133 @@ impl Tree {
                 let node: &Node = leaf_frag.unwrap_base();
                 (node.id, prefix_encode(&node.lo, key.as_ref()))
             };
-            let frag = if let Some(ref n) = new_ivec {
-                Frag::Set(encoded_key, n.clone())
-            } else {
-                Frag::Del(encoded_key)
-            };
-            let link =
-                self.pages.link(node_id, leaf_ptr, frag, &guard);
-            match link {
-                Ok(_) => {
-                    if let Some(res) = subscriber_reservation.take() {
-                        let event = if let Some(n) = new {
-                            subscription::Event::Set(
-                                key.as_ref().to_vec(),
-                                n.clone(),
-                            )
-                        } else {
-                            subscription::Event::Del(
-                                key.as_ref().to_vec(),
-                            )
-                        };
 
-                        res.complete(event);
-                    }
-
-                    guard.flush();
-                    return Ok(());
+            let versions_pid: PageId;
+            let mut versions_ptr: TreePtr<'_>;
+            if let Some((versions, versions_key)) = versions {
+                versions_ptr = versions_key;
+                let (visible_ts, cur) = versions.visible(
+                    key.as_ref(),
+                    tx_ts,
+                    &self.config,
+                );
+                if old != cur.map(|c| &*c) {
+                    return Err(Error::CasFailed(
+                        cur.map(|c| PinnedValue::new(&*c, pin_guard)),
+                    ));
                 }
-                Err(Error::CasFailed(_)) => {}
+                if versions.has_pending()
+                    || versions.highest_visible_timestamp() > tx_ts
+                {
+                    // our tx was beaten by another that "happened"
+                    // later (had a higher timestamp)
+                    continue;
+                }
+            } else {
+                let res = self.install_versions(
+                    node_id,
+                    leaf_ptr.clone(),
+                    encoded_key.clone(),
+                    &guard,
+                );
+
+                let (pid, ptr) = match res {
+                    Ok((pid, ptr)) => (pid, ptr),
+                    Err(Error::CasFailed(())) => {
+                        // somebody beat us to modifying leaf
+                        continue;
+                    }
+                    Err(other) => return Err(other.danger_cast()),
+                };
+                versions_pid = pid;
+                versions_ptr = ptr;
+            }
+
+            let mut subscriber_reservation =
+                self.subscriptions.reserve(&key);
+
+            // try to install pending version
+            let frag = if let Some(ref n) = new_ivec {
+                Frag::VersionPendingSet(tx_ts, n.clone())
+            } else {
+                Frag::VersionPendingDel(tx_ts)
+            };
+            let link = self.pages.link(
+                versions_pid,
+                versions_ptr,
+                frag,
+                &guard,
+            );
+            match link {
+                Ok(new_ptr) => {
+                    versions_ptr = new_ptr;
+                }
+                Err(Error::CasFailed(_)) => {
+                    continue;
+                }
                 Err(other) => {
                     guard.flush();
                     return Err(other.danger_cast());
                 }
             }
-            M.tree_looped();
+
+            // try to commit pending version.
+            // this is a sub-loop because it
+            // may have been moved by the PageCache
+            // since the link above
+            loop {
+                let frag = Frag::VersionCommit(tx_ts);
+                let link = self.pages.link(
+                    versions_pid,
+                    versions_ptr,
+                    frag,
+                    &guard,
+                );
+
+                match link {
+                    Ok(_) => {
+                        if let Some(res) =
+                            subscriber_reservation.take()
+                        {
+                            let event = if let Some(n) = new {
+                                subscription::Event::Set(
+                                    key.as_ref().to_vec(),
+                                    n.clone(),
+                                )
+                            } else {
+                                subscription::Event::Del(
+                                    key.as_ref().to_vec(),
+                                )
+                            };
+
+                            res.complete(event);
+                        }
+
+                        guard.flush();
+                        return Ok(());
+                    }
+                    Err(Error::CasFailed(None)) => {
+                        // this should really only happen
+                        // when the Tree is being totally
+                        // deleted.
+                        error!(
+                            "page {} was removed before we \
+                             could commit a pending transaction \
+                             on it",
+                            versions_pid
+                        );
+                        break;
+                    }
+                    Err(Error::CasFailed(Some(new_ptr))) => {
+                        versions_ptr = new_ptr;
+                    }
+                    Err(other) => {
+                        guard.flush();
+                        return Err(other.danger_cast());
+                    }
+                }
+                M.tree_looped();
+            }
         }
     }
 
@@ -1074,11 +1195,16 @@ impl Tree {
         }
     }
 
-    fn get_internal<'g, K: AsRef<[u8]>>(
+    fn new_tx_timestamp(&self) -> u64 {
+        u64::max_value()
+    }
+
+    fn get_versions<'g, K: AsRef<[u8]>>(
         &self,
         key: K,
         guard: &'g Guard,
-    ) -> Result<(Path<'g>, Option<&'g [u8]>), ()> {
+    ) -> Result<(Path<'g>, Option<(&'g Versions, TreePtr<'g>)>), ()>
+    {
         let path = self.path_for_key(key.as_ref(), guard)?;
 
         // pull out tree leaf pointers to k->v items
@@ -1098,21 +1224,72 @@ impl Tree {
         let ret = if let Some(idx) = search {
             let versions_pid = items[idx].1;
 
-            let (_ts, res) = pull_version(
-                &self.pages,
-                versions_pid,
-                key.as_ref(),
-                u64::max_value(),
-                &self.config,
-                guard,
-            )?;
+            let (versions_frag, ptr) = self
+                .pages
+                .get(versions_pid, guard)
+                .map(|page_get| page_get.unwrap())?;
 
-            res.map(|r| &*r)
+            let versions = versions_frag.unwrap_versions();
+
+            Some((versions, ptr))
         } else {
             None
         };
 
         Ok((path, ret))
+    }
+
+    fn install_versions<'g>(
+        &self,
+        node_pid: PageId,
+        node_cas_key: TreePtr<'g>,
+        key: IVec,
+        guard: &'g Guard,
+    ) -> Result<(PageId, TreePtr<'g>), ()> {
+        let versions_pid = self.pages.allocate(guard)?;
+
+        let parent_frag = Frag::InsertVersions(key, versions_pid);
+
+        let res = self.pages.link(
+            node_pid,
+            node_cas_key,
+            parent_frag,
+            guard,
+        );
+
+        if res.is_err() {
+            let mut ptr = TreePtr::allocated();
+            loop {
+                match self.pages.free(versions_pid, ptr, guard) {
+                    Ok(_) => break,
+                    Err(Error::CasFailed(Some(actual_ptr))) => {
+                        ptr = actual_ptr.clone()
+                    }
+                    Err(Error::CasFailed(None)) => panic!(
+                        "somehow allocated child was already freed"
+                    ),
+                    Err(other) => return Err(other.danger_cast()),
+                }
+            }
+
+            return Err(Error::CasFailed(()));
+        }
+
+        loop {
+            let frag = Frag::Versions(Versions::default());
+            let res = self.pages.replace(
+                versions_pid,
+                TreePtr::allocated(),
+                frag,
+                guard,
+            );
+
+            match res {
+                Err(Error::CasFailed(..)) => continue,
+                Err(other) => return Err(other.danger_cast()),
+                Ok(ptr) => return Ok((versions_pid, ptr)),
+            }
+        }
     }
 
     #[doc(hidden)]
