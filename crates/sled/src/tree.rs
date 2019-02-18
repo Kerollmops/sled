@@ -308,62 +308,23 @@ impl Tree {
             let pin_guard = pin();
             let tx_ts = self.new_tx_timestamp();
 
-            let (mut path, versions) = self
-                .get_versions(key.as_ref(), &guard)
+            let (versions, versions_pid, versions_ptr) = self
+                .get_or_insert_versions_for_key(key.as_ref(), &guard)
                 .map_err(|e| e.danger_cast())?;
 
-            if old.is_some() && versions.is_none() {
-                return Err(Error::CasFailed(None));
+            let (visible_ts, cur) =
+                versions.visible(key.as_ref(), tx_ts, &self.config);
+            if old != cur.map(|c| &*c) {
+                return Err(Error::CasFailed(
+                    cur.map(|c| PinnedValue::new(&*c, pin_guard)),
+                ));
             }
-
-            let (leaf_frag, leaf_ptr) = path.pop().expect(
-                "get_internal somehow returned a path of length zero",
-            );
-
-            let (node_id, encoded_key) = {
-                let node: &Node = leaf_frag.unwrap_base();
-                (node.id, prefix_encode(&node.lo, key.as_ref()))
-            };
-
-            let versions_pid: PageId;
-            let mut versions_ptr: TreePtr<'_>;
-            if let Some((versions, versions_key)) = versions {
-                versions_ptr = versions_key;
-                let (visible_ts, cur) = versions.visible(
-                    key.as_ref(),
-                    tx_ts,
-                    &self.config,
-                );
-                if old != cur.map(|c| &*c) {
-                    return Err(Error::CasFailed(
-                        cur.map(|c| PinnedValue::new(&*c, pin_guard)),
-                    ));
-                }
-                if versions.has_pending()
-                    || versions.highest_visible_timestamp() > tx_ts
-                {
-                    // our tx was beaten by another that "happened"
-                    // later (had a higher timestamp)
-                    continue;
-                }
-            } else {
-                let res = self.install_versions(
-                    node_id,
-                    leaf_ptr.clone(),
-                    encoded_key.clone(),
-                    &guard,
-                );
-
-                let (pid, ptr) = match res {
-                    Ok((pid, ptr)) => (pid, ptr),
-                    Err(Error::CasFailed(())) => {
-                        // somebody beat us to modifying leaf
-                        continue;
-                    }
-                    Err(other) => return Err(other.danger_cast()),
-                };
-                versions_pid = pid;
-                versions_ptr = ptr;
+            if versions.has_pending()
+                || versions.highest_visible_timestamp() > tx_ts
+            {
+                // our tx was beaten by another that "happened"
+                // later (had a higher timestamp)
+                continue;
             }
 
             let mut subscriber_reservation =
@@ -476,8 +437,8 @@ impl Tree {
 
         loop {
             let pin_guard = pin();
-            let (mut path, existing_key) =
-                self.get_internal(key.as_ref(), &guard)?;
+            let (mut path, versions) =
+                self.get_versions(key.as_ref(), &guard)?;
             let (leaf_frag, leaf_ptr) = path.pop().expect(
                 "path_for_key should always return a path \
                  of length >= 2 (root + leaf)",
@@ -1237,6 +1198,51 @@ impl Tree {
         };
 
         Ok((path, ret))
+    }
+
+    fn get_or_insert_versions_for_key<'g>(
+        &self,
+        key: &[u8],
+        guard: &'g Guard,
+    ) -> Result<(&'g Versions, PageId, TreePtr<'g>), ()> {
+        loop {
+            let (mut path, versions) = self
+                .get_versions(key.as_ref(), &guard)
+                .map_err(|e| e.danger_cast())?;
+
+            let (leaf_frag, leaf_ptr) = path.pop().expect(
+                "get_internal somehow returned a path of length zero",
+            );
+
+            let leaf = leaf_frag.unwrap_base();
+
+            if versions.is_some() {
+                let (versions, versions_key) = versions.unwrap();
+                return Ok((versions, leaf.id, versions_key));
+            }
+
+            let encoded_key = prefix_encode(&leaf.lo, key);
+
+            let res = self.install_versions(
+                leaf.id,
+                leaf_ptr.clone(),
+                encoded_key.clone(),
+                &guard,
+            );
+
+            let (pid, ptr) = match res {
+                Ok((pid, ptr)) => {
+                    let (frag, ptr) =
+                        self.pages.get(pid, guard)?.unwrap();
+                    return Ok((frag.unwrap_versions(), pid, ptr));
+                }
+                Err(Error::CasFailed(())) => {
+                    // somebody beat us to modifying leaf
+                    continue;
+                }
+                Err(other) => return Err(other.danger_cast()),
+            };
+        }
     }
 
     fn install_versions<'g>(
