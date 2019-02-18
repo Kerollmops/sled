@@ -146,6 +146,10 @@ impl Versions {
     pub(crate) fn highest_visible_timestamp(&self) -> u64 {
         self.versions.last().map(|vsn| vsn.ts()).unwrap_or(0)
     }
+
+    pub(crate) fn has_pending(&self) -> bool {
+        self.pending.is_some()
+    }
 }
 
 pub(crate) fn pull_version(
