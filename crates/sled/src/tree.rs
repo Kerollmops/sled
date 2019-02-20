@@ -355,63 +355,12 @@ impl Tree {
                 }
             }
 
-            // try to commit pending version.
-            // this is a sub-loop because it
-            // may have been moved by the PageCache
-            // since the link above
-            loop {
-                let frag = Frag::VersionCommit(tx_ts);
-                let link = self.pages.link(
-                    versions_pid,
-                    versions_ptr,
-                    frag,
-                    &guard,
-                );
-
-                match link {
-                    Ok(_) => {
-                        if let Some(res) =
-                            subscriber_reservation.take()
-                        {
-                            let event = if let Some(n) = new {
-                                subscription::Event::Set(
-                                    key.as_ref().to_vec(),
-                                    n.clone(),
-                                )
-                            } else {
-                                subscription::Event::Del(
-                                    key.as_ref().to_vec(),
-                                )
-                            };
-
-                            res.complete(event);
-                        }
-
-                        guard.flush();
-                        return Ok(());
-                    }
-                    Err(Error::CasFailed(None)) => {
-                        // this should really only happen
-                        // when the Tree is being totally
-                        // deleted.
-                        error!(
-                            "page {} was removed before we \
-                             could commit a pending transaction \
-                             on it",
-                            versions_pid
-                        );
-                        break;
-                    }
-                    Err(Error::CasFailed(Some(new_ptr))) => {
-                        versions_ptr = new_ptr;
-                    }
-                    Err(other) => {
-                        guard.flush();
-                        return Err(other.danger_cast());
-                    }
-                }
-                M.tree_looped();
-            }
+            return self.commit_version(
+                versions_pid,
+                versions_ptr,
+                frag,
+                &guard,
+            );
         }
     }
 
@@ -1295,6 +1244,70 @@ impl Tree {
                 Err(other) => return Err(other.danger_cast()),
                 Ok(ptr) => return Ok((versions_pid, ptr)),
             }
+        }
+    }
+
+    fn commit_version(
+        &self,
+        versions_pid: PageId,
+        mut versions_ptr: TreePtr<'_>,
+        frag: Frag,
+        guard: &Guard,
+    ) -> Result<(), ()> {
+        // try to commit pending version.
+        // this is a sub-loop because it
+        // may have been moved by the PageCache
+        // since the link above
+        loop {
+            let frag = Frag::VersionCommit(tx_ts);
+            let link = self.pages.link(
+                versions_pid,
+                versions_ptr,
+                frag,
+                &guard,
+            );
+
+            match link {
+                Ok(_) => {
+                    if let Some(res) = subscriber_reservation.take() {
+                        let event = if let Some(n) = new {
+                            subscription::Event::Set(
+                                key.as_ref().to_vec(),
+                                n.clone(),
+                            )
+                        } else {
+                            subscription::Event::Del(
+                                key.as_ref().to_vec(),
+                            )
+                        };
+
+                        res.complete(event);
+                    }
+
+                    guard.flush();
+                    return Ok(());
+                }
+                Err(Error::CasFailed(None)) => {
+                    // this should really only happen
+                    // when the Tree is being totally
+                    // deleted.
+                    error!(
+                        "page {} was removed before we \
+                         could commit a pending transaction \
+                         on it",
+                        versions_pid
+                    );
+                    return Err(Error::CollectionRemoved);
+                }
+                Err(Error::CasFailed(Some(new_ptr))) => {
+                    versions_ptr = new_ptr;
+                }
+                Err(other) => {
+                    guard.flush();
+                    return Err(other.danger_cast());
+                }
+            }
+            M.tree_looped();
         }
     }
 

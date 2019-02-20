@@ -30,6 +30,8 @@ pub enum Error<Actual> {
         /// The file location that corrupted data was found at.
         at: DiskPtr,
     },
+    /// The underlying collection has been removed while completing this action.
+    CollectionRemoved,
     // a failpoint has been triggered for testing purposes
     #[doc(hidden)]
     #[cfg(feature = "failpoints")]
@@ -86,6 +88,13 @@ where
                     false
                 }
             }
+            CollectionRemoved => {
+                if let CollectionRemoved = *other {
+                    true
+                } else {
+                    false
+                }
+            }
             #[cfg(feature = "failpoints")]
             FailPoint => {
                 if let FailPoint = *other {
@@ -125,10 +134,13 @@ where
             CollectionNotFound(_) => "Collection does not exist.",
             Unsupported(ref e) => &*e,
             ReportableBug(ref e) => &*e,
-            #[cfg(feature = "failpoints")]
-            FailPoint => "Fail point has been triggered.",
             Io(ref e) => e.description(),
             Corruption { .. } => "Read corrupted data.",
+            CollectionRemoved => {
+                "Collection removed while accessing it."
+            }
+            #[cfg(feature = "failpoints")]
+            FailPoint => "Fail point has been triggered.",
         }
     }
 }
@@ -158,12 +170,15 @@ where
                  PLEASE REPORT THIS BUG!",
                 e
             ),
-            #[cfg(feature = "failpoints")]
-            FailPoint => write!(f, "Fail point has been triggered."),
             Io(ref e) => write!(f, "IO error: {}", e),
             Corruption { at } => {
                 write!(f, "Read corrupted data at file offset {}", at)
             }
+            CollectionRemoved => {
+                write!(f, "Collection removed during access")
+            }
+            #[cfg(feature = "failpoints")]
+            FailPoint => write!(f, "Fail point has been triggered."),
         }
     }
 }
@@ -185,14 +200,15 @@ impl<T> Error<T> {
             CollectionNotFound(n) => CollectionNotFound(n),
             Unsupported(s) => Unsupported(s),
             ReportableBug(s) => ReportableBug(s),
-            #[cfg(feature = "failpoints")]
-            FailPoint => FailPoint,
             Io(e) => Io(e),
             Corruption {
                 at,
             } => Corruption {
                 at,
             },
+            CollectionRemoved => CollectionRemoved,
+            #[cfg(feature = "failpoints")]
+            FailPoint => FailPoint,
         }
     }
 
@@ -206,10 +222,11 @@ impl<T> Error<T> {
             CollectionNotFound(n) => CollectionNotFound(n),
             Unsupported(s) => Unsupported(s),
             ReportableBug(s) => ReportableBug(s),
-            #[cfg(feature = "failpoints")]
-            FailPoint => FailPoint,
             Io(e) => Io(e),
             Corruption { at } => Corruption { at },
+            CollectionRemoved => CollectionRemoved,
+            #[cfg(feature = "failpoints")]
+            FailPoint => FailPoint,
         }
     }
 }
