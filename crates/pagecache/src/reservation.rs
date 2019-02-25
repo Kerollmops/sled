@@ -27,21 +27,16 @@ impl<'a> Reservation<'a> {
     /// Cancel the reservation, placing a failed flush on disk, returning
     /// the (cancelled) log sequence number and file offset.
     pub fn abort(mut self) -> Result<(Lsn, DiskPtr), ()> {
-        if self.ptr.is_blob() {
-            if !self.is_blob_rewrite {
-                // we don't want to remove this blob if something
-                // else may still be using it.
+        if self.ptr.is_blob() && !self.is_blob_rewrite {
+            // we don't want to remove this blob if something
+            // else may still be using it.
 
-                trace!(
-                    "removing blob for aborted reservation at lsn {}",
-                    self.ptr
-                );
+            trace!(
+                "removing blob for aborted reservation at lsn {}",
+                self.ptr
+            );
 
-                remove_blob(
-                    self.ptr.blob().1,
-                    &self.iobufs.0.config,
-                )?;
-            }
+            remove_blob(self.ptr.blob().1, &self.iobufs.0.config)?;
         }
 
         self.flush(false)
@@ -67,7 +62,7 @@ impl<'a> Reservation<'a> {
     /// Note that an blob write still has a pointer in the
     /// log at the provided lid location.
     pub fn ptr(&self) -> DiskPtr {
-        self.ptr.clone()
+        self.ptr
     }
 
     fn flush(&mut self, valid: bool) -> Result<(Lsn, DiskPtr), ()> {

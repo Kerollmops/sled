@@ -44,6 +44,7 @@ mod flusher;
 mod hash;
 mod iobuf;
 mod iterator;
+mod logger;
 mod materializer;
 mod meta;
 mod metrics;
@@ -72,8 +73,6 @@ static ALLOCATOR: measure_allocs::TrackingAllocator =
 /// The event log helps debug concurrency issues.
 pub mod event_log;
 
-pub mod logger;
-
 use std::{
     cell::UnsafeCell,
     fmt::{self, Debug},
@@ -87,7 +86,6 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 use sled_sync::atomic::{AtomicUsize, Ordering::SeqCst};
 
-#[doc(hidden)]
 use self::logger::{
     MessageHeader, MessageKind, SegmentHeader, SegmentTrailer,
 };
