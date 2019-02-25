@@ -368,18 +368,18 @@ pub struct PageCache<PM, P>
 where
     P: 'static + Send + Sync,
 {
-    t: Arc<PM>,
+    t: PM,
     config: Config,
-    inner: Arc<PageTable<PageTableEntry<P>>>,
+    inner: PageTable<PageTableEntry<P>>,
     max_pid: AtomicUsize,
     free: Arc<Mutex<BinaryHeap<PageId>>>,
     log: Log,
     lru: Lru,
     updates: AtomicUsize,
     last_snapshot: Arc<Mutex<Option<Snapshot>>>,
-    idgen: Arc<AtomicUsize>,
-    idgen_persists: Arc<AtomicUsize>,
-    idgen_persist_mu: Arc<Mutex<()>>,
+    idgen: AtomicUsize,
+    idgen_persists: AtomicUsize,
+    idgen_persist_mu: Mutex<()>,
     was_recovered: bool,
 }
 
@@ -474,21 +474,21 @@ where
         // snapshot before loading it.
         let snapshot = read_snapshot_or_default::<PM, P>(&config)?;
 
-        let materializer = Arc::new(PM::new(config.clone()));
+        let materializer = PM::new(config.clone());
 
         let mut pc = PageCache {
             t: materializer,
             config: config.clone(),
-            inner: Arc::new(PageTable::default()),
+            inner: PageTable::default(),
             max_pid: AtomicUsize::new(0),
             free: Arc::new(Mutex::new(BinaryHeap::new())),
             log: Log::start(config, snapshot.clone())?,
             lru,
             updates: AtomicUsize::new(0),
             last_snapshot: Arc::new(Mutex::new(Some(snapshot))),
-            idgen_persist_mu: Arc::new(Mutex::new(())),
-            idgen: Arc::new(AtomicUsize::new(0)),
-            idgen_persists: Arc::new(AtomicUsize::new(0)),
+            idgen_persist_mu: Mutex::new(()),
+            idgen: AtomicUsize::new(0),
+            idgen_persists: AtomicUsize::new(0),
             was_recovered: false,
         };
 
