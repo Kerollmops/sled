@@ -8,12 +8,12 @@ pub struct Tx {
     #[doc(hidden)]
     pub guard: Guard,
     #[doc(hidden)]
-    pub ts: u64,
+    pub ts: Lsn,
 }
 
 impl Tx {
     /// Creates a new Tx with a given timestamp.
-    pub fn new(ts: u64) -> Self {
+    pub fn new(ts: Lsn) -> Self {
         Self {
             guard: pin(),
             ts: ts,

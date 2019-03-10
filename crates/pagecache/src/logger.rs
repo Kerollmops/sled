@@ -86,8 +86,12 @@ impl Log {
     }
 
     /// Reserve space in the log for a pending linearized operation.
-    pub fn reserve(&self, buf: &[u8]) -> Result<Reservation<'_>, ()> {
-        self.iobufs.reserve(buf)
+    pub fn reserve(
+        &self,
+        buf: &[u8],
+        tx: &Tx,
+    ) -> Result<Reservation<'_>, ()> {
+        self.iobufs.reserve(buf, tx)
     }
 
     /// Reserve a replacement buffer for a previously written
@@ -96,17 +100,23 @@ impl Log {
     pub(super) fn reserve_blob(
         &self,
         blob_ptr: BlobPointer,
+        tx: &Tx,
     ) -> Result<Reservation<'_>, ()> {
-        self.iobufs.reserve_blob(blob_ptr)
+        self.iobufs.reserve_blob(blob_ptr, tx)
     }
 
     /// Write a buffer into the log. Returns the log sequence
     /// number and the file offset of the write.
-    pub fn write<B>(&self, buf: B) -> Result<(Lsn, DiskPtr), ()>
+    pub fn write<B>(
+        &self,
+        buf: B,
+        tx: &Tx,
+    ) -> Result<(Lsn, DiskPtr), ()>
     where
         B: AsRef<[u8]>,
     {
-        self.reserve(buf.as_ref()).and_then(|res| res.complete())
+        self.reserve(buf.as_ref(), tx)
+            .and_then(|res| res.complete())
     }
 
     /// Return an iterator over the log, starting with

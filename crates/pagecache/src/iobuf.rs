@@ -694,8 +694,9 @@ impl IoBufs {
     pub(super) fn reserve<'a>(
         &'a self,
         raw_buf: &[u8],
+        tx: &Tx,
     ) -> Result<Reservation<'a>, ()> {
-        self.reserve_inner(raw_buf, false)
+        self.reserve_inner(raw_buf, false, tx)
     }
 
     /// Reserve a replacement buffer for a previously written
@@ -704,17 +705,19 @@ impl IoBufs {
     pub(super) fn reserve_blob<'a>(
         &'a self,
         blob_ptr: BlobPointer,
+        tx: &Tx,
     ) -> Result<Reservation<'a>, ()> {
         let lsn_buf: [u8; size_of::<BlobPointer>()] =
             u64_to_arr(blob_ptr as u64);
 
-        self.reserve_inner(&lsn_buf, true)
+        self.reserve_inner(&lsn_buf, true, tx)
     }
 
     fn reserve_inner<'a>(
         &'a self,
         raw_buf: &[u8],
         is_blob_rewrite: bool,
+        tx: &Tx,
     ) -> Result<Reservation<'a>, ()> {
         let _measure = Measure::new(&M.reserve);
 
@@ -930,7 +933,7 @@ impl IoBufs {
             let destination = &mut (out_buf)[res_start..res_end];
             let reservation_offset = lid + buf_offset;
 
-            let reservation_lsn = iobuf.get_lsn() + buf_offset as Lsn;
+            let reservation_lsn = tx.ts;
 
             trace!(
                 "reserved {} bytes at lsn {} lid {}",

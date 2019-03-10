@@ -584,7 +584,7 @@ where
 
     /// Begins a transaction.
     pub fn begin(&self) -> Result<Tx, ()> {
-        Ok(Tx::new(self.generate_id()?))
+        Ok(Tx::new(self.generate_id()? as Lsn))
     }
 
     /// Create a new page, trying to reuse old freed pages if possible
@@ -727,8 +727,10 @@ where
 
         let bytes =
             measure(&M.serialize, || serialize(&prepend).unwrap());
-        let log_reservation =
-            self.log.reserve(&bytes).map_err(|e| e.danger_cast())?;
+        let log_reservation = self
+            .log
+            .reserve(&bytes, tx)
+            .map_err(|e| e.danger_cast())?;
 
         let new = if let Update::Append(new) = prepend.update {
             new
@@ -880,7 +882,7 @@ where
 
             let log_reservation = self
                 .log
-                .reserve_blob(blob_ptr)
+                .reserve_blob(blob_ptr, tx)
                 .map_err(|e| e.danger_cast())?;
 
             let new_ptr = log_reservation.ptr();
@@ -987,8 +989,10 @@ where
             LoggedUpdate { pid, update: new };
         let bytes =
             measure(&M.serialize, || serialize(&replace).unwrap());
-        let log_reservation =
-            self.log.reserve(&bytes).map_err(|e| e.danger_cast())?;
+        let log_reservation = self
+            .log
+            .reserve(&bytes, tx)
+            .map_err(|e| e.danger_cast())?;
         let lsn = log_reservation.lsn();
         let new_ptr = log_reservation.ptr();
 
@@ -1152,7 +1156,7 @@ where
             persisted = self.idgen_persists.load(SeqCst);
             if persisted < necessary_persists {
                 // it's our responsibility to persist up to our ID
-                let tx = Tx::new(u64::max_value());
+                let tx = Tx::new(Lsn::max_value());
                 let page_get = self
                     .get(COUNTER_PID, &tx)
                     .map_err(|e| e.danger_cast())?;

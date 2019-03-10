@@ -36,8 +36,11 @@ fn more_log_reservations_than_buffers() {
     let big_msg_overhead = MSG_HEADER_LEN + total_seg_overhead;
     let big_msg_sz = config.io_buf_size - big_msg_overhead;
 
+    let tx = pagecache::Tx::new(0);
+
     for _ in 0..=config.io_bufs {
-        reservations.push(log.reserve(&vec![0; big_msg_sz]).unwrap())
+        reservations
+            .push(log.reserve(&vec![0; big_msg_sz], &tx).unwrap())
     }
     for res in reservations.into_iter().rev() {
         // abort in reverse order
@@ -58,8 +61,10 @@ fn non_contiguous_log_flush() {
     let buf_len = (config.io_buf_size / MINIMUM_ITEMS_PER_SEGMENT)
         - (MSG_HEADER_LEN + seg_overhead);
 
-    let res1 = log.reserve(&vec![0; buf_len]).unwrap();
-    let res2 = log.reserve(&vec![0; buf_len]).unwrap();
+    let tx = pagecache::Tx::new(0);
+
+    let res1 = log.reserve(&vec![0; buf_len], &tx).unwrap();
+    let res2 = log.reserve(&vec![0; buf_len], &tx).unwrap();
     let id = res2.lid();
     let lsn = res2.lsn();
     res2.abort();
@@ -95,9 +100,11 @@ fn concurrent_logging() {
         let t1 = thread::Builder::new()
             .name("c1".to_string())
             .spawn(move || {
+                let tx = pagecache::Tx::new(0);
+
                 for i in 0..1_000 {
                     let buf = vec![1; i % buf_len];
-                    log.write(buf);
+                    log.write(buf, &tx);
                 }
             })
             .unwrap();
@@ -105,9 +112,11 @@ fn concurrent_logging() {
         let t2 = thread::Builder::new()
             .name("c2".to_string())
             .spawn(move || {
+                let tx = pagecache::Tx::new(0);
+
                 for i in 0..1_000 {
                     let buf = vec![2; i % buf_len];
-                    iobs2.write(buf);
+                    iobs2.write(buf, &tx);
                 }
             })
             .unwrap();
@@ -115,9 +124,11 @@ fn concurrent_logging() {
         let t3 = thread::Builder::new()
             .name("c3".to_string())
             .spawn(move || {
+                let tx = pagecache::Tx::new(0);
+
                 for i in 0..1_000 {
                     let buf = vec![3; i % buf_len];
-                    iobs3.write(buf);
+                    iobs3.write(buf, &tx);
                 }
             })
             .unwrap();
@@ -125,18 +136,22 @@ fn concurrent_logging() {
         let t4 = thread::Builder::new()
             .name("c4".to_string())
             .spawn(move || {
+                let tx = pagecache::Tx::new(0);
+
                 for i in 0..1_000 {
                     let buf = vec![4; i % buf_len];
-                    iobs4.write(buf);
+                    iobs4.write(buf, &tx);
                 }
             })
             .unwrap();
         let t5 = thread::Builder::new()
             .name("c5".to_string())
             .spawn(move || {
+                let tx = pagecache::Tx::new(0);
+
                 for i in 0..1_000 {
                     let buf = vec![5; i % buf_len];
-                    iobs5.write(buf);
+                    iobs5.write(buf, &tx);
                 }
             })
             .unwrap();
@@ -144,9 +159,11 @@ fn concurrent_logging() {
         let t6 = thread::Builder::new()
             .name("c6".to_string())
             .spawn(move || {
+                let tx = pagecache::Tx::new(0);
+
                 for i in 0..1_000 {
                     let buf = vec![6; i % buf_len];
-                    let (lsn, _lid) = iobs6.write(buf).unwrap();
+                    let (lsn, _lid) = iobs6.write(buf, &tx).unwrap();
                     iobs6.make_stable(lsn).unwrap();
                 }
             })
@@ -182,12 +199,14 @@ fn concurrent_logging_404() {
         let h = thread::Builder::new()
             .name(format!("t_{}", t))
             .spawn(move || {
+                let tx = pagecache::Tx::new(0);
+
                 for i in 0..ITERATIONS {
                     let current =
                         SHARED_COUNTER.load(Ordering::SeqCst);
                     let raw_value: [u8; size_of::<usize>()] =
                         unsafe { std::mem::transmute(current + 1) };
-                    let res = log.reserve(&raw_value).unwrap();
+                    let res = log.reserve(&raw_value, &tx).unwrap();
                     match SHARED_COUNTER.compare_and_swap(
                         current,
                         current + 1,
@@ -238,7 +257,9 @@ fn concurrent_logging_404() {
 
 fn write(log: &Log) {
     let data_bytes = b"yoyoyoyo";
-    let (lsn, ptr) = log.write(data_bytes).unwrap();
+    let tx = pagecache::Tx::new(0);
+
+    let (lsn, ptr) = log.write(data_bytes, &tx).unwrap();
     let read_buf = log.read(lsn, ptr).unwrap().into_data().unwrap();
     assert_eq!(
         read_buf, data_bytes,
@@ -247,7 +268,9 @@ fn write(log: &Log) {
 }
 
 fn abort(log: &Log) {
-    let res = log.reserve(&[0; 5]).unwrap();
+    let tx = pagecache::Tx::new(0);
+    let res = log.reserve(&[0; 5], &tx).unwrap();
+
     let (lsn, ptr) = res.abort().unwrap();
     match log.read(lsn, ptr) {
         Ok(LogRead::Failed(_, _)) => {}
@@ -285,20 +308,21 @@ fn log_iterator() {
         .io_buf_size(1000)
         .build();
     let log = Log::start_raw_log(config.clone()).unwrap();
-    let (first_lsn, _) = log.write(b"").unwrap();
-    log.write(b"1");
-    log.write(b"22");
-    log.write(b"333");
+    let tx = pagecache::Tx::new(0);
+    let (first_lsn, _) = log.write(b"", &tx).unwrap();
+    log.write(b"1", &tx);
+    log.write(b"22", &tx);
+    log.write(b"333", &tx);
 
     // stick an abort in the middle, which should not be
     // returned
     {
-        let res = log.reserve(b"never_gonna_hit_disk").unwrap();
+        let res = log.reserve(b"never_gonna_hit_disk", &tx).unwrap();
         res.abort().unwrap();
     }
 
-    log.write(b"4444");
-    let (last_lsn, _) = log.write(b"55555").unwrap();
+    log.write(b"4444", &tx);
+    let (last_lsn, _) = log.write(b"55555", &tx).unwrap();
     log.make_stable(last_lsn).unwrap();
 
     drop(log);
@@ -334,6 +358,8 @@ fn log_chunky_iterator() {
             let max_valid_size = config.io_buf_size
                 - (MSG_HEADER_LEN + SEG_HEADER_LEN + SEG_TRAILER_LEN);
 
+            let tx = pagecache::Tx::new(0);
+
             for i in 0..1000 {
                 let len =
                     thread_rng().gen_range(0, max_valid_size * 2);
@@ -342,15 +368,16 @@ fn log_chunky_iterator() {
                 let abort = thread_rng().gen::<bool>();
 
                 if abort {
-                    if let Ok(res) = log.reserve(&buf) {
+                    if let Ok(res) = log.reserve(&buf, &tx) {
                         res.abort().unwrap();
                     } else {
                         assert!(len > max_valid_size);
                     }
                 } else {
-                    let (lsn, lid) = log.write(buf.clone()).expect(
-                        "should be able to write reservation",
-                    );
+                    let (lsn, lid) =
+                        log.write(buf.clone(), &tx).expect(
+                            "should be able to write reservation",
+                        );
                     reference.push((lsn, lid, buf));
                 }
             }
@@ -393,9 +420,10 @@ fn snapshot_with_out_of_order_buffers() {
 
     let log = Log::start_raw_log(config.clone()).unwrap();
 
+    let tx = pagecache::Tx::new(0);
     for i in 0..4 {
         let buf = vec![i as u8; len];
-        let (lsn, _lid) = log.write(buf).unwrap();
+        let (lsn, _lid) = log.write(buf, &tx).unwrap();
         log.make_stable(lsn).unwrap();
     }
 
@@ -435,9 +463,10 @@ fn multi_segment_log_iteration() {
 
     let log = Log::start_raw_log(config.clone()).unwrap();
 
+    let tx = pagecache::Tx::new(0);
     for i in 0..config.io_bufs * 16 {
         let buf = vec![i as u8; big_msg_sz * i];
-        log.write(buf).unwrap();
+        log.write(buf, &tx).unwrap();
     }
     log.flush();
 
@@ -575,13 +604,15 @@ fn prop_log_works(ops: Vec<Op>, flusher: bool) -> bool {
             }
             Write(buf) => {
                 let len = buf.len();
-                let (lsn, ptr) = log.write(buf.clone()).unwrap();
+                let tx = pagecache::Tx::new(0);
+                let (lsn, ptr) = log.write(buf.clone(), &tx).unwrap();
                 tip = ptr.lid() as usize + len + MSG_HEADER_LEN;
                 reference.push((lsn, ptr, Some(buf), len));
             }
             AbortReservation(buf) => {
                 let len = buf.len();
-                let res = log.reserve(&buf).unwrap();
+                let tx = pagecache::Tx::new(0);
+                let res = log.reserve(&buf, &tx).unwrap();
                 let lsn = res.lsn();
                 let lid = res.lid();
                 let ptr = res.ptr();
