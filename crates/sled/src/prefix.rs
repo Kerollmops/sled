@@ -2,6 +2,8 @@ use super::*;
 
 use std::cmp::{self, Ordering};
 
+use longest_common_prefix::longest_prefix;
+
 pub(crate) fn prefix_encode(prefix: &[u8], buf: &[u8]) -> IVec {
     assert!(
         prefix <= buf,
@@ -10,9 +12,9 @@ pub(crate) fn prefix_encode(prefix: &[u8], buf: &[u8]) -> IVec {
         buf
     );
 
+    let prefix_len = longest_prefix(prefix, buf);
     let max = u8::max_value() as usize;
-    let zip = prefix.iter().zip(buf);
-    let prefix_len = zip.take(max).take_while(|(a, b)| a == b).count();
+    let prefix_len = cmp::min(prefix_len, max);
 
     let encoded_len = 1 + buf.len() - prefix_len;
 
@@ -59,9 +61,9 @@ pub(crate) fn prefix_reencode(
         buf
     );
 
+    let prefix_len = longest_prefix(new_prefix, &output);
     let max = u8::max_value() as usize;
-    let zip = new_prefix.iter().zip(&output);
-    let prefix_len = zip.take(max).take_while(|(a, b)| a == b).count();
+    let prefix_len = cmp::min(prefix_len, max);
 
     let skip = prefix_len - cmp::min(old_prefix.len(), max);
     let encoded_len = 1 + output.len() - prefix_len;
