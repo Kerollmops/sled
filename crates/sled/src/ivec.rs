@@ -5,10 +5,8 @@ use std::{fmt, ops::Deref, result::Result as StdResult, sync::Arc};
 const CUTOFF: usize = std::mem::size_of::<&[u8]>() - 1;
 type Inner = [u8; CUTOFF];
 
-/// A buffer that may either be inline or remote and protected
-/// by an Arc
-#[derive(Clone, Ord, Eq)]
-pub enum IVec {
+#[derive(Clone)]
+enum IVecInner {
     /// An inlined small value
     Inline(u8, Inner),
     /// A heap-allocated value protected by an Arc
@@ -17,6 +15,11 @@ pub enum IVec {
         buf: Arc<[u8]>,
     },
 }
+
+/// A buffer that may either be inline or remote and protected
+/// by an Arc
+#[derive(Clone)]
+pub struct IVec(IVecInner);
 
 impl Serialize for IVec {
     fn serialize<S: Serializer>(
@@ -36,23 +39,20 @@ impl<'de> Deserialize<'de> for IVec {
 }
 
 impl IVec {
-    pub(crate) fn new(v: &[u8]) -> IVec {
-        if v.len() <= CUTOFF {
-            let sz = v.len() as u8;
-
-            let mut data: Inner = [0u8; CUTOFF];
-
+    pub fn new(bytes: &[u8]) -> IVec {
+        if bytes.len() <= CUTOFF {
+            let size = bytes.len() as u8;
+            let mut data = Inner::default();
             unsafe {
                 std::ptr::copy_nonoverlapping(
-                    v.as_ptr(),
+                    bytes.as_ptr(),
                     data.as_mut_ptr(),
-                    v.len(),
+                    bytes.len(),
                 );
             }
-
-            IVec::Inline(sz, data)
+            IVec(IVecInner::Inline(size, data))
         } else {
-            IVec::Remote { buf: v.into() }
+            IVec(IVecInner::Remote { buf: bytes.into() })
         }
     }
 
