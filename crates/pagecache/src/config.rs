@@ -50,85 +50,28 @@ impl Deref for Config {
 /// ```
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub struct ConfigBuilder {
-    #[doc(hidden)]
-    pub blink_node_split_size: usize,
-    #[doc(hidden)]
-    pub blink_node_merge_ratio: usize,
-    #[doc(hidden)]
-    pub cache_bits: usize,
-    #[doc(hidden)]
-    pub cache_capacity: u64,
-    #[doc(hidden)]
-    pub flush_every_ms: Option<u64>,
-    #[doc(hidden)]
-    pub io_bufs: usize,
-    #[doc(hidden)]
-    pub io_buf_size: usize,
-    #[doc(hidden)]
-    pub page_consolidation_threshold: usize,
-    #[doc(hidden)]
-    pub path: PathBuf,
-    #[doc(hidden)]
-    pub read_only: bool,
-    #[doc(hidden)]
-    pub segment_cleanup_threshold: f64,
-    #[doc(hidden)]
-    pub segment_cleanup_skew: usize,
-    #[doc(hidden)]
-    pub segment_mode: SegmentMode,
-    #[doc(hidden)]
-    pub snapshot_after_ops: u64,
-    #[doc(hidden)]
-    pub snapshot_path: Option<PathBuf>,
-    #[doc(hidden)]
-    pub temporary: bool,
-    #[doc(hidden)]
-    pub use_compression: bool,
-    #[doc(hidden)]
-    pub compression_factor: i32,
-    #[doc(hidden)]
-    pub merge_operator: Option<usize>,
-    #[doc(hidden)]
-    pub print_profile_on_drop: bool,
-    #[doc(hidden)]
-    pub idgen_persist_interval: u64,
-    #[doc(hidden)]
-    pub async_io: bool,
-    #[doc(hidden)]
-    pub async_io_threads: usize,
+    blink_node_split_size: usize,
+    blink_node_merge_ratio: usize,
+    cache_bits: usize,
+    cache_capacity: u64,
+    flush_every_ms: Option<u64>,
+    io_bufs: usize,
+    io_buf_size: usize,
+    page_consolidation_threshold: usize,
+    read_only: bool,
+    segment_cleanup_threshold: f64,
+    segment_cleanup_skew: usize,
+    segment_mode: SegmentMode,
+    snapshot_after_ops: u64,
+    snapshot_path: Option<PathBuf>,
+    use_compression: bool,
+    compression_factor: i32,
+    print_profile_on_drop: bool,
+    idgen_persist_interval: u64,
+    async_io: bool,
+    async_io_threads: usize,
 }
 
-unsafe impl Send for ConfigBuilder {}
-
-impl Default for ConfigBuilder {
-    fn default() -> ConfigBuilder {
-        ConfigBuilder {
-            io_bufs: 3,
-            io_buf_size: 2 << 22, // 8mb
-            blink_node_split_size: 4096,
-            blink_node_merge_ratio: 4,
-            page_consolidation_threshold: 10,
-            path: PathBuf::from(DEFAULT_PATH),
-            read_only: false,
-            cache_bits: 8,                      // 256 shards
-            cache_capacity: 1024 * 1024 * 1024, // 1gb
-            use_compression: false,
-            compression_factor: 5,
-            flush_every_ms: Some(500),
-            snapshot_after_ops: 1_000_000,
-            snapshot_path: None,
-            segment_cleanup_threshold: 0.40,
-            segment_cleanup_skew: 10,
-            temporary: false,
-            segment_mode: SegmentMode::Gc,
-            merge_operator: None,
-            print_profile_on_drop: false,
-            idgen_persist_interval: 1_000_000,
-            async_io: true,
-            async_io_threads: 3,
-        }
-    }
-}
 macro_rules! supported {
     ($cond:expr, $msg:expr) => {
         if !$cond {
@@ -150,9 +93,29 @@ macro_rules! builder {
 }
 
 impl ConfigBuilder {
-    /// Returns a default `ConfigBuilder`
-    pub fn new() -> ConfigBuilder {
-        Self::default()
+    fn new() -> ConfigBuilder {
+        ConfigBuilder {
+            io_bufs: 3,
+            io_buf_size: 2 << 22, // 8mb
+            blink_node_split_size: 4096,
+            blink_node_merge_ratio: 4,
+            page_consolidation_threshold: 10,
+            read_only: false,
+            cache_bits: 8,                      // 256 shards
+            cache_capacity: 1024 * 1024 * 1024, // 1gb
+            use_compression: false,
+            compression_factor: 5,
+            flush_every_ms: Some(500),
+            snapshot_after_ops: 1_000_000,
+            snapshot_path: None,
+            segment_cleanup_threshold: 0.40,
+            segment_cleanup_skew: 10,
+            segment_mode: SegmentMode::Gc,
+            print_profile_on_drop: false,
+            idgen_persist_interval: 1_000_000,
+            async_io: true,
+            async_io_threads: 3,
+        }
     }
 
     /// Set the path of the database (builder).
