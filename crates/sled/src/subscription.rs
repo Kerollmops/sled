@@ -1,5 +1,6 @@
 use std::{
     collections::BTreeMap,
+    ops::Bound,
     sync::{
         atomic::{AtomicUsize, Ordering::Relaxed},
         mpsc::{sync_channel, Receiver, SyncSender},
@@ -34,7 +35,7 @@ impl Event {
     /// Return a reference to the key that this `Event` refers to
     pub fn key(&self) -> &[u8] {
         match self {
-            Event::Set(k, ..) | Event::Merge(k, ..) | Event::Del(k) => &*k,
+            Event::Set(k, ..) | Event::Merge(k, ..) | Event::Del(k) => k,
         }
     }
 }
@@ -124,7 +125,9 @@ impl Subscriptions {
         key: R,
     ) -> Option<ReservedBroadcast> {
         let r_mu = self.watched.read().unwrap();
-        let prefixes = r_mu.iter().filter(|(k, _)| key.as_ref().starts_with(k));
+        let key = key.as_ref();
+        let range = (Bound::Included(key), Bound::Unbounded);
+        let prefixes = r_mu.range::<[_], _>(range).take_while(|(k, _)| key.starts_with(k));
 
         let mut subscribers = vec![];
 
