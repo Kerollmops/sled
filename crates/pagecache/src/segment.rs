@@ -62,7 +62,7 @@ use std::{collections::BTreeMap, fs::File, mem};
 
 use self::reader::LogReader;
 
-use futures::{future::Future, oneshot, Oneshot};
+use futures::{channel::oneshot, executor::block_on};
 
 use super::*;
 
@@ -87,7 +87,7 @@ pub(super) struct SegmentAccountant {
     pause_rewriting: bool,
     safety_buffer: Vec<LogId>,
     ordering: BTreeMap<Lsn, LogId>,
-    async_truncations: Vec<Oneshot<Result<()>>>,
+    async_truncations: Vec<oneshot::Receiver<Result<()>>>,
 }
 
 #[cfg(feature = "event_log")]
@@ -1072,7 +1072,7 @@ impl SegmentAccountant {
         let truncations = mem::replace(&mut self.async_truncations, Vec::new());
 
         for truncation in truncations {
-            match truncation.wait() {
+            match block_on(truncation) {
                 Ok(Ok(())) => {}
                 error => {
                     error!("failed to shrink file: {:?}", error);
@@ -1266,7 +1266,7 @@ impl SegmentAccountant {
 
         if let Some(ref thread_pool) = self.config.thread_pool {
             trace!("asynchronously truncating file to length {}", at);
-            let (completer, oneshot) = oneshot();
+            let (completer, oneshot) = oneshot::channel();
 
             let f = self.config.file.clone();
 
