@@ -6,14 +6,19 @@ use std::{
         mpsc::{sync_channel, Receiver, SyncSender},
         Arc, RwLock,
     },
+    pin::Pin,
 };
 
 use futures::{
     future::Future,
-    sync::oneshot::{
+    executor::block_on,
+    task::Context,
+    channel::oneshot::{
         channel as future_channel, Receiver as FutureReceiver,
         Sender as FutureSender,
     },
+    Poll,
+    Stream,
 };
 
 use crate::ivec::IVec;
@@ -74,9 +79,32 @@ impl Iterator for Subscriber {
     fn next(&mut self) -> Option<Event> {
         loop {
             let future_rx = self.rx.recv().ok()?;
-            match future_rx.wait() {
+            match block_on(future_rx) {
                 Ok(event) => return Some(event),
                 Err(_cancelled) => continue,
+            }
+        }
+    }
+}
+
+impl Stream for Subscriber {
+    type Item = Result<Event, ()>;
+
+    fn poll_next(
+        self: Pin<&mut Self>,
+        cx: &mut Context,
+    ) -> Poll<Option<Self::Item>>
+    {
+        loop {
+            match self.rx.recv() {
+                Ok(mut future_rx) => {
+                    match Future::poll(Pin::new(&mut future_rx), cx) {
+                        Poll::Ready(Ok(event)) => return Poll::Ready(Some(Ok(event))),
+                        Poll::Ready(Err(_)) => return Poll::Ready(Some(Err(()))),
+                        Poll::Pending => return Poll::Pending,
+                    }
+                },
+                Err(_recv_error) => return Poll::Ready(Some(Err(()))),
             }
         }
     }
