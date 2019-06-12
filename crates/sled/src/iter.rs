@@ -4,7 +4,7 @@ use pagecache::{Measure, M};
 
 use super::*;
 
-fn lower_bound_includes<'a>(lb: &ops::Bound<Vec<u8>>, item: &'a [u8]) -> bool {
+fn lower_bound_includes(lb: &ops::Bound<Vec<u8>>, item: &[u8]) -> bool {
     match lb {
         ops::Bound::Included(ref start) => start.as_slice() <= item,
         ops::Bound::Excluded(ref start) => start.as_slice() < item,
@@ -12,10 +12,10 @@ fn lower_bound_includes<'a>(lb: &ops::Bound<Vec<u8>>, item: &'a [u8]) -> bool {
     }
 }
 
-fn upper_bound_includes<'a>(ub: &ops::Bound<Vec<u8>>, item: &'a [u8]) -> bool {
+fn upper_bound_includes(ub: &ops::Bound<Vec<u8>>, item: &[u8]) -> bool {
     match ub {
-        ops::Bound::Included(ref end) => item <= end.as_ref(),
-        ops::Bound::Excluded(ref end) => item < end.as_ref(),
+        ops::Bound::Included(ref end) => item <= end.as_slice(),
+        ops::Bound::Excluded(ref end) => item < end.as_slice(),
         ops::Bound::Unbounded => true,
     }
 }

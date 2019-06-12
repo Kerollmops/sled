@@ -2,19 +2,27 @@ use std::{
     collections::BTreeMap,
     sync::{
         atomic::{AtomicUsize, Ordering::Relaxed},
-        mpsc::{sync_channel, Receiver, SyncSender},
+        // mpsc::{sync_channel, Receiver, SyncSender},
         Arc, RwLock,
     },
     pin::Pin,
 };
 
 use futures::{
-    future::Future,
+    future::FutureExt,
+    stream::StreamExt,
+    sink::SinkExt,
     executor::block_on,
     task::Context,
-    channel::oneshot::{
-        channel as future_channel, Receiver as FutureReceiver,
-        Sender as FutureSender,
+    channel::{
+        mpsc::{
+            channel as mpsc_channel, Receiver as MpscReceiver,
+            Sender as MpscSender,
+        },
+        oneshot::{
+            channel as future_channel, Receiver as FutureReceiver,
+            Sender as FutureSender,
+        }
     },
     Poll,
     Stream,
@@ -56,12 +64,12 @@ impl Clone for Event {
     }
 }
 
-type Senders = Vec<(usize, SyncSender<FutureReceiver<Event>>)>;
+type Senders = Vec<(usize, MpscSender<FutureReceiver<Event>>)>;
 
 /// A subscriber listening on a specified prefix
 pub struct Subscriber {
     id: usize,
-    rx: Receiver<FutureReceiver<Event>>,
+    rx: MpscReceiver<FutureReceiver<Event>>,
     home: Arc<RwLock<Senders>>,
 }
 
@@ -76,13 +84,14 @@ impl Iterator for Subscriber {
     type Item = Event;
 
     fn next(&mut self) -> Option<Event> {
-        loop {
-            let future_rx = self.rx.recv().ok()?;
-            match block_on(future_rx) {
-                Ok(event) => return Some(event),
-                Err(_cancelled) => continue,
-            }
-        }
+        // loop {
+        //     let future_rx = self.rx.recv().ok()?;
+        //     match block_on(future_rx) {
+        //         Ok(event) => return Some(event),
+        //         Err(_cancelled) => continue,
+        //     }
+        // }
+        unimplemented!()
     }
 }
 
@@ -90,20 +99,21 @@ impl Stream for Subscriber {
     type Item = Result<Event, ()>;
 
     fn poll_next(
-        self: Pin<&mut Self>,
+        mut self: Pin<&mut Self>,
         cx: &mut Context,
     ) -> Poll<Option<Self::Item>>
     {
         loop {
-            match self.rx.recv() {
-                Ok(mut future_rx) => {
-                    match Future::poll(Pin::new(&mut future_rx), cx) {
+            match self.rx.poll_next_unpin(cx) {
+                Poll::Ready(Some(mut future_rx)) => {
+                    match future_rx.poll_unpin(cx) {
                         Poll::Ready(Ok(event)) => return Poll::Ready(Some(Ok(event))),
-                        Poll::Ready(Err(_)) => return Poll::Ready(Some(Err(()))),
+                        Poll::Ready(Err(e)) => panic!("xxx: {}", e),
                         Poll::Pending => return Poll::Pending,
                     }
                 },
-                Err(_recv_error) => return Poll::Ready(Some(Err(()))),
+                Poll::Ready(None) => return Poll::Ready(None),
+                Poll::Pending => return Poll::Pending,
             }
         }
     }
@@ -131,7 +141,7 @@ impl Subscriptions {
             }
         };
 
-        let (tx, rx) = sync_channel(1024);
+        let (tx, rx) = mpsc_channel(1024);
 
         let arc_senders = &r_mu[&prefix];
         let mut w_senders = arc_senders.write().unwrap();
@@ -157,11 +167,11 @@ impl Subscriptions {
         let mut subscribers = vec![];
 
         for (_, subs_rwl) in prefixes {
-            let subs = subs_rwl.read().unwrap();
+            let mut subs = subs_rwl.write().unwrap();
 
-            for (_id, sender) in subs.iter() {
+            for (_id, sender) in subs.iter_mut() {
                 let (tx, rx) = future_channel();
-                if sender.send(rx).is_err() {
+                if block_on(sender.send(rx)).is_err() {
                     continue;
                 }
                 subscribers.push(tx);
